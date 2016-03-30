@@ -1,0 +1,140 @@
+/**
+ *
+ * ADTF Freedemo Project Filter.
+ *
+ * @file
+ * Copyright 
+ *
+ * $Author: saikiran $
+ * $Date: 2016-03-15 16:51:21 +0200 (Mi, 15 Mar 2016) $
+ * $Revision: - $
+ *
+ * @remarks
+ *
+ */
+#ifndef _FREEDEMO_FILTER_H_
+#define _FREEDEMO_FILTER_H_
+
+#define OID_ADTF_FREEDEMO_FILTER "adtf.aadc.freedemo"
+
+
+//*************************************************************************************************
+class FreeDemo : public adtf::cFilter {
+
+    ADTF_DECLARE_FILTER_VERSION(OID_ADTF_FREEDEMO_FILTER, "FREE DEMO Filter", OBJCAT_DataFilter, "FREE DEMO Filter", 1, 0, 0, "Beta Version");
+
+	cInputPin     m_oInputMeas;
+	cObjectPtr<IMediaTypeDescription> m_pCoderDescSignalInput;
+	
+	cInputPin     m_oUSFrontLeft;
+	cObjectPtr<IMediaTypeDescription> m_pCoderDescSignalUSFrontLeft;
+	
+	cInputPin     m_oNoOvertake;
+	cObjectPtr<IMediaTypeDescription> m_pCoderDescSignalNoOvertake;
+
+	cInputPin     m_oUSFrontMid;
+	cObjectPtr<IMediaTypeDescription> m_pCoderDescSignalUSFrontMid;
+
+	cOutputPin    m_oOutputFilter;
+    	cObjectPtr<IMediaTypeDescription> m_pCoderDescSignalOutput;
+    
+	cOutputPin		m_oVelocityOut;
+	cObjectPtr<IMediaTypeDescription> m_pCoderDescSignalVelocityOut;
+	
+	cOutputPin		m_oSteeringAngleOut;
+	cObjectPtr<IMediaTypeDescription> m_pCoderDescSignalSteeringAngleOut;
+	
+	cOutputPin		m_oManeuerFinished;
+	cObjectPtr<IMediaTypeDescription> m_pCoderDescSignalManeuerFinished;
+
+	// Road sign start
+	
+	cInputPin		m_oRoadSign;
+	cObjectPtr<IMediaTypeDescription> m_pDescriptionRoadSign;
+	/*! the id for the i16Identifier of the media description for output pin */
+	tBufferID m_szIDRoadSignI16Identifier; 
+	/*! the id for the f32Imagesize of the media description for output pin */
+	tBufferID m_szIDRoadSignF32Imagesize;     
+	/*! indicates if bufferIDs were set */
+	tBool m_bIDsRoadSignSet;
+	
+	// Road sign END
+
+public:
+    FreeDemo(const tChar* __info);
+    virtual ~FreeDemo();
+
+protected:
+    tResult Init(tInitStage eStage, __exception);
+    tResult Shutdown(tInitStage eStage, __exception);
+	
+    // implements IPinEventSink
+    tResult OnPinEvent(IPin* pSource,
+                       tInt nEventCode,
+                       tInt nParam1,
+                       tInt nParam2,
+                       IMediaSample* pMediaSample);
+
+private:
+
+	// FreeDemo Properties
+	tTimeStamp start_time,end_time;
+	tFloat32 time_diff,time_diff_last;
+
+	tInt N;	
+	tInt step;
+	tInt16 i16ID;
+	tInt markerCount;
+	
+	tBool Marker;
+	tBool Start, ManeuerFinished;
+	tBool startFlag, timeFlag;
+	tBool var_headlight,var_headlight_left;
+	tBool NoOvertake;
+
+	tFloat32    distance_st1;
+	tFloat32    distance_st2;
+	tFloat32    distance_st3;
+		
+	tFloat32 USFrontMid;
+	tFloat32 step_time;
+	tFloat32 outputSample;
+	tFloat32 f32Area ;
+	tFloat32 VelocityOut;
+	tFloat32 SteeringAngleOut;
+	tFloat32 LEFTDriftSteer;
+	tFloat32 RIGHTDriftSteer;
+	tFloat32 DriftVelocity;
+	
+	tFloat32 step_time1;
+	tFloat32 step_time2;
+	tFloat32 step_time3;
+	tFloat32 step_time4;
+	tFloat32 step_time5;
+	tFloat32 step_time6;
+	tFloat32 step_time7;
+	tFloat32 step_time8;
+	tFloat32 step_time9;
+	tFloat32 step_time10;
+	tFloat32 step_time11;
+	tFloat32 step_time12;
+	
+	// FreeDemo Functions
+	tResult WriteOutputs(tUInt32 timeStamp);
+	tResult StartAction(tUInt32 timeStamp);
+	tResult Action1(tUInt32 timeStamp);	
+	tResult Action2(tUInt32 timeStamp);	
+	tResult Action3(tUInt32 timeStamp);
+	
+	tResult Action4(tUInt32 timeStamp);
+	tResult Action5(tUInt32 timeStamp);	
+	tResult Action6(tUInt32 timeStamp);	
+	tResult evaluateAccel(tUInt32 timeStamp);
+	tResult PropertyChanged(const char* strPropertyName);
+	tResult ReadProperties(const tChar* strPropertyName);
+	
+    
+};
+
+//*************************************************************************************************
+#endif // _ESCAPER_FILTER_H_

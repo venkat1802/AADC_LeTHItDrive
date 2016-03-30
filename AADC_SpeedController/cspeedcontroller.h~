@@ -1,0 +1,76 @@
+﻿#pragma once
+
+#ifndef _SPEEDCONTROLLER_H_
+#define _SPEEDCONTROLLER_H_
+
+#include "stdafx.h"
+
+#define OID_ADTF_SPEEDCONTROLLER "adtf.aadc.cspeedcontroller"
+
+class cspeedcontroller : public adtf::cFilter
+{
+    //ADTF_DECLARE_FILTER_VERSION(OID_ADTF_SPEEDCONTROLLER, "AADC SPEED CONTROLLER ", OBJCAT_DataFilter);    
+    ADTF_DECLARE_FILTER_VERSION(OID_ADTF_SPEEDCONTROLLER, "AADC SPEED CONTROLLER ", OBJCAT_DataFilter, "Speed Controller", 1, 0,0, "Beta Version");    
+
+    cInputPin Emergency_Brake_Flag;                
+    cInputPin Lanefollower_Acc;
+	cInputPin Lanefollower_steer;
+	cInputPin m_accel1;
+	cInputPin m_steer1;
+	//cInputPin m_maneuver_finish_flag;
+	cInputPin m_maneuver_start_flag;
+    cInputPin m_Ultrasonic_Front_Center;
+		
+    cOutputPin m_headlight;
+	cOutputPin m_accelerate;
+	cOutputPin m_steer;
+	
+    cObjectPtr<IMediaTypeDescription> med_typ_Emergency_Brake_Flag;
+	cObjectPtr<IMediaTypeDescription> med_typ_Lanefollower_Acc;
+    cObjectPtr<IMediaTypeDescription> med_typ_Lanefollower_steer;
+	cObjectPtr<IMediaTypeDescription> med_typ_accel1;
+	cObjectPtr<IMediaTypeDescription> med_typ_steer1;
+	//cObjectPtr<IMediaTypeDescription> med_typ_m_maneuver_finish_flag;
+	cObjectPtr<IMediaTypeDescription> med_typ_m_maneuver_start_flag;
+    cObjectPtr<IMediaTypeDescription> m_pDescUltrasonic_Front_Center;
+
+	cObjectPtr<IMediaTypeDescription> med_typ_m_accelerate;
+	cObjectPtr<IMediaTypeDescription> med_typ_m_steer;
+	cObjectPtr<IMediaTypeDescription> med_typ_m_headlight;
+
+
+public:
+    cspeedcontroller(const tChar* __info);
+    virtual ~cspeedcontroller();
+    //tResult PropertyChanged(const char* strProperty);
+
+protected: // overwrites cFilter
+    tResult Init(tInitStage eStage, __exception);
+    tResult Start(__exception = NULL);
+    tResult Stop(__exception = NULL);
+    tResult Shutdown(tInitStage eStage, __exception);        
+    tResult OnPinEvent(IPin* pSource, tInt nEventCode, tInt nParam1, tInt nParam2, IMediaSample* pMediaSample);
+
+
+private:    
+   // tResult CreatePins( __exception = NULL);
+    //tResult CreateOutputPins( __exception = NULL);
+
+	//tResult ReadProperties(const tChar* strPropertyName);
+
+    tBool var_Emergency_Brake_Flag;
+	tBool var_headlight;
+    tFloat32 var_Lanefollower_Acc;
+tFloat32 Ultrasonic_Front_Center;
+    tFloat32 var_m_accelerate, var_m_steer;
+	//rakesh added
+	tFloat32 var_Lanefollower_steer, accel1, steer1;
+	tBool maneuver_start_flag;//, maneuver_finish_flag;
+
+	tResult generateop(tUInt32 timeStamp);
+	tResult pritority(tUInt32 timeStamp);
+
+};
+
+#endif
+

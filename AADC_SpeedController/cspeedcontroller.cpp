@@ -1,0 +1,632 @@
+/**
+Copyright (c) 
+Audi Autonomous Driving Cup. All rights reserved.
+
+Redistribution and use in source and binary forms, with or without modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this list of conditions and the following disclaimer.
+2. Redistributions in binary form must reproduce the above copyright notice, this list of conditions and the following disclaimer in the documentation and/or other materials provided with the distribution.
+3.  All advertising materials mentioning features or use of this software must display the following acknowledgement: �This product includes software developed by the Audi AG and its contributors for Audi Autonomous Driving Cup.�
+4.  Neither the name of Audi nor the names of its contributors may be used to endorse or promote products derived from this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY AUDI AG AND CONTRIBUTORS �AS IS� AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL AUDI AG OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+
+**********************************************************************
+* $Author:: spiesra $  $Date:: 2015-05-13 08:29:07#$ $Rev:: 35003   $
+**********************************************************************/
+
+
+// arduinofilter.cpp : Definiert die exportierten Funktionen f�r die DLL-Anwendung.
+//
+#include "stdafx.h"
+#include "cspeedcontroller.h"
+
+#define FLT_EPSILON 0.01
+
+//#define MIN_DISTANCE "cspeedcontroller::threshold_value"
+
+ADTF_FILTER_PLUGIN("AADC SPEED CONTROLLER", OID_ADTF_SPEEDCONTROLLER, cspeedcontroller)
+
+cspeedcontroller::cspeedcontroller(const tChar* __info) : cFilter(__info)
+{
+	Controllerstatusflag = NO_Maneuver_Active;
+	var_signal_id = default_starting_phase;
+	varJury_start_stop = tFalse;
+    var_Emergency_Brake_Flag = tFalse;
+    Maneuver_Active_Flag = tFalse;
+    maneuver_start_flag = tFalse;
+    var_headlight = tFalse;
+    var_steer = 90.0f;
+    var_accelerate = 90.0f;
+    var_Lanefollower_Acc = 90.0f;
+    var_Lanefollower_steer = 90.0f;
+    var_maneuver_accel1 = 90.0f;
+    var_maneuver_steer1 = 90.0f;
+    var_pullout_steer = 90.0f;
+    var_pullout_acc = 90.0f;
+    var_Parking_Acc = 90.0f;
+    var_Parking_steer = 90.0f;
+    var_ovtaking_Acc = 90.0f;
+    var_ovtaking_steer = 90.0f;
+    //Ultrasonic_Front_Center = 0.f;
+}
+
+cspeedcontroller::~cspeedcontroller()
+{
+	
+}
+
+tResult cspeedcontroller::Init(tInitStage eStage, __exception)
+{
+	RETURN_IF_FAILED(cFilter::Init(eStage, __exception_ptr))
+		if (eStage == StageFirst)
+		{
+			// create description manager
+			cObjectPtr<IMediaDescriptionManager> pDescManager;
+			RETURN_IF_FAILED(_runtime->GetObject(OID_ADTF_MEDIA_DESCRIPTION_MANAGER, IID_ADTF_MEDIA_DESCRIPTION_MANAGER, (tVoid**)&pDescManager, __exception_ptr));
+
+			// get media type for input pins
+			tChar const * med_des_m_jurycomplete = pDescManager->GetMediaDescription("tBoolSignalValue");
+			RETURN_IF_POINTER_NULL(med_des_m_jurycomplete);
+			cObjectPtr<IMediaType> med_typ_m_jurycomplete_loc	= new cMediaType(0, 0, 0, "tBoolSignalValue", med_des_m_jurycomplete, IMediaDescription::MDF_DDL_DEFAULT_VERSION);
+			RETURN_IF_FAILED(med_typ_m_jurycomplete_loc->GetInterface(IID_ADTF_MEDIA_TYPE_DESCRIPTION, (tVoid**)&med_typ_Jurycomplete));
+			RETURN_IF_FAILED(Jurycomplete.Create("JuryComplete", med_typ_m_jurycomplete_loc, static_cast<IPinEventSink*> (this)));
+			RETURN_IF_FAILED(RegisterPin(&Jurycomplete));
+
+			tChar const * med_des_m_jurystartstop = pDescManager->GetMediaDescription("tBoolSignalValue");
+			RETURN_IF_POINTER_NULL(med_des_m_jurystartstop);
+			cObjectPtr<IMediaType> med_typ_m_jurystartstop_loc	= new cMediaType(0, 0, 0, "tBoolSignalValue", med_des_m_jurystartstop, IMediaDescription::MDF_DDL_DEFAULT_VERSION);
+			RETURN_IF_FAILED(med_typ_m_jurystartstop_loc->GetInterface(IID_ADTF_MEDIA_TYPE_DESCRIPTION, (tVoid**)&med_typ_JuryStart_Stop));
+			RETURN_IF_FAILED(JuryStart_Stop.Create("JuryStart", med_typ_m_jurystartstop_loc, static_cast<IPinEventSink*> (this)));
+			RETURN_IF_FAILED(RegisterPin(&JuryStart_Stop));
+
+			tChar const * med_des_m_ebFlag = pDescManager->GetMediaDescription("tBoolSignalValue");
+			RETURN_IF_POINTER_NULL(med_des_m_ebFlag);
+			cObjectPtr<IMediaType> med_typ_m_ebflag_loc	= new cMediaType(0, 0, 0, "tBoolSignalValue", med_des_m_ebFlag, IMediaDescription::MDF_DDL_DEFAULT_VERSION);
+			RETURN_IF_FAILED(med_typ_m_ebflag_loc->GetInterface(IID_ADTF_MEDIA_TYPE_DESCRIPTION, (tVoid**)&med_typ_Emergency_Brake_Flag));
+			RETURN_IF_FAILED(Emergency_Brake_Flag.Create("SpeedConEBFlag", med_typ_m_ebflag_loc, static_cast<IPinEventSink*> (this)));
+			RETURN_IF_FAILED(RegisterPin(&Emergency_Brake_Flag));
+
+			tChar const * med_des_signalids = pDescManager->GetMediaDescription("tSignalValue");
+			RETURN_IF_POINTER_NULL(med_des_signalids);
+			cObjectPtr<IMediaType> med_typ_signalids_loc	= new cMediaType(0, 0, 0, "tSignalValue", med_des_signalids, IMediaDescription::MDF_DDL_DEFAULT_VERSION);
+			RETURN_IF_FAILED(med_typ_signalids_loc->GetInterface(IID_ADTF_MEDIA_TYPE_DESCRIPTION, (tVoid**)&med_typ_Signal_IDS));
+			RETURN_IF_FAILED(Signal_IDS.Create("Signal_ID", med_typ_signalids_loc, static_cast<IPinEventSink*> (this)));
+			RETURN_IF_FAILED(RegisterPin(&Signal_IDS));
+
+			tChar const * med_des_ovtaking_steer = pDescManager->GetMediaDescription("tSignalValue");
+			RETURN_IF_POINTER_NULL(med_des_ovtaking_steer);
+			cObjectPtr<IMediaType> med_typ_ovtaking_steer_loc= new cMediaType(0, 0, 0, "tSignalValue", med_des_ovtaking_steer, IMediaDescription::MDF_DDL_DEFAULT_VERSION);
+			RETURN_IF_FAILED(med_typ_ovtaking_steer_loc->GetInterface(IID_ADTF_MEDIA_TYPE_DESCRIPTION, (tVoid**)&med_typ_ovtaking_steer));
+			RETURN_IF_FAILED(ovtaking_steer.Create("Ovtaking_Steer", med_typ_ovtaking_steer_loc, static_cast<IPinEventSink*> (this)));
+			RETURN_IF_FAILED(RegisterPin(&ovtaking_steer));
+
+			tChar const * med_des_ovtaking_Acc = pDescManager->GetMediaDescription("tSignalValue");
+			RETURN_IF_POINTER_NULL(med_des_ovtaking_Acc);
+			cObjectPtr<IMediaType> med_typ_ovtaking_Acc_loc	= new cMediaType(0, 0, 0, "tSignalValue", med_des_ovtaking_Acc, IMediaDescription::MDF_DDL_DEFAULT_VERSION);
+			RETURN_IF_FAILED(med_typ_ovtaking_Acc_loc->GetInterface(IID_ADTF_MEDIA_TYPE_DESCRIPTION, (tVoid**)&med_typ_ovtaking_acc));
+			RETURN_IF_FAILED(ovtaking_acc.Create("Ovtaking_Acc", med_typ_ovtaking_Acc_loc, static_cast<IPinEventSink*> (this)));
+			RETURN_IF_FAILED(RegisterPin(&ovtaking_acc));
+
+			tChar const * med_des_parking_steer = pDescManager->GetMediaDescription("tSignalValue");
+			RETURN_IF_POINTER_NULL(med_des_parking_steer);
+			cObjectPtr<IMediaType> med_typ_parking_steer_loc= new cMediaType(0, 0, 0, "tSignalValue", med_des_parking_steer, IMediaDescription::MDF_DDL_DEFAULT_VERSION);
+			RETURN_IF_FAILED(med_typ_parking_steer_loc->GetInterface(IID_ADTF_MEDIA_TYPE_DESCRIPTION, (tVoid**)&med_typ_parking_steer));
+			RETURN_IF_FAILED(parking_steer.Create("Parking_Steer", med_typ_parking_steer_loc, static_cast<IPinEventSink*> (this)));
+			RETURN_IF_FAILED(RegisterPin(&parking_steer));
+
+			tChar const * med_des_parking_Acc = pDescManager->GetMediaDescription("tSignalValue");
+			RETURN_IF_POINTER_NULL(med_des_parking_Acc);
+			cObjectPtr<IMediaType> med_typ_parking_Acc_loc	= new cMediaType(0, 0, 0, "tSignalValue", med_des_parking_Acc, IMediaDescription::MDF_DDL_DEFAULT_VERSION);
+			RETURN_IF_FAILED(med_typ_parking_Acc_loc->GetInterface(IID_ADTF_MEDIA_TYPE_DESCRIPTION, (tVoid**)&med_typ_parking_acc));
+			RETURN_IF_FAILED(parking_acc.Create("Parking_Acc", med_typ_parking_Acc_loc, static_cast<IPinEventSink*> (this)));
+			RETURN_IF_FAILED(RegisterPin(&parking_acc));
+
+			tChar const * med_des_pullover_Acc = pDescManager->GetMediaDescription("tSignalValue");
+			RETURN_IF_POINTER_NULL(med_des_pullover_Acc);
+			cObjectPtr<IMediaType> med_typ_pullover_Acc_loc	= new cMediaType(0, 0, 0, "tSignalValue", med_des_pullover_Acc, IMediaDescription::MDF_DDL_DEFAULT_VERSION);
+			RETURN_IF_FAILED(med_typ_pullover_Acc_loc->GetInterface(IID_ADTF_MEDIA_TYPE_DESCRIPTION, (tVoid**)&med_typ_pullout_acc));
+			RETURN_IF_FAILED(pullout_acc.Create("Pullout_Acc", med_typ_pullover_Acc_loc, static_cast<IPinEventSink*> (this)));
+			RETURN_IF_FAILED(RegisterPin(&pullout_acc));
+
+			tChar const * strDescSignalUltrasonic_Front_Center = pDescManager->GetMediaDescription("tSignalValue");
+			RETURN_IF_POINTER_NULL(strDescSignalUltrasonic_Front_Center);
+			cObjectPtr<IMediaType> pTypeSignalUltrasonic_Front_Center = new cMediaType(0, 0, 0, "tSignalValue", strDescSignalUltrasonic_Front_Center, IMediaDescription::MDF_DDL_DEFAULT_VERSION);
+			RETURN_IF_FAILED(pTypeSignalUltrasonic_Front_Center->GetInterface(IID_ADTF_MEDIA_TYPE_DESCRIPTION, (tVoid**)&m_pDescUltrasonic_Front_Center));
+			RETURN_IF_FAILED(m_Ultrasonic_Front_Center.Create("ultrasonic_center", pTypeSignalUltrasonic_Front_Center, static_cast<IPinEventSink*> (this)));
+			RETURN_IF_FAILED(RegisterPin(&m_Ultrasonic_Front_Center));
+
+			//input pin enabling maneuver accel and steer
+            tChar const * med_des_maneuver_start_flag = pDescManager->GetMediaDescription("tBoolSignalValue");
+			RETURN_IF_POINTER_NULL(med_des_maneuver_start_flag);
+			cObjectPtr<IMediaType> med_typ_maneuver_start_flag= new cMediaType(0, 0, 0, "tBoolSignalValue", med_des_maneuver_start_flag, IMediaDescription::MDF_DDL_DEFAULT_VERSION);
+			RETURN_IF_FAILED(med_typ_maneuver_start_flag->GetInterface(IID_ADTF_MEDIA_TYPE_DESCRIPTION, (tVoid**)&med_typ_m_maneuver_start_flag));
+			RETURN_IF_FAILED(m_maneuver_statusflag.Create("maneuver_start_flag", med_typ_maneuver_start_flag, static_cast<IPinEventSink*> (this)));
+			RETURN_IF_FAILED(RegisterPin(&m_maneuver_statusflag));
+
+			//input pin lane tracking steering angle
+			tChar const * med_des_pullover_steer = pDescManager->GetMediaDescription("tSignalValue");
+			RETURN_IF_POINTER_NULL(med_des_pullover_steer);
+			cObjectPtr<IMediaType> med_typ_pullover_steer_loc= new cMediaType(0, 0, 0, "tSignalValue", med_des_pullover_steer, IMediaDescription::MDF_DDL_DEFAULT_VERSION);
+			RETURN_IF_FAILED(med_typ_pullover_steer_loc->GetInterface(IID_ADTF_MEDIA_TYPE_DESCRIPTION, (tVoid**)&med_typ_pullout_steer));
+			RETURN_IF_FAILED(pullout_steer.Create("Pullout_Steer", med_typ_pullover_steer_loc, static_cast<IPinEventSink*> (this)));
+			RETURN_IF_FAILED(RegisterPin(&pullout_steer));
+
+			tChar const * med_des_Lanefollower_Acc = pDescManager->GetMediaDescription("tSignalValue");
+			RETURN_IF_POINTER_NULL(med_des_Lanefollower_Acc);
+			cObjectPtr<IMediaType> med_typ_Lanefollower_Acc_loc	= new cMediaType(0, 0, 0, "tSignalValue", med_des_Lanefollower_Acc, IMediaDescription::MDF_DDL_DEFAULT_VERSION);
+			RETURN_IF_FAILED(med_typ_Lanefollower_Acc_loc->GetInterface(IID_ADTF_MEDIA_TYPE_DESCRIPTION, (tVoid**)&med_typ_Lanefollower_Acc));
+			RETURN_IF_FAILED(Lanefollower_Acc.Create("LanetrackerAcc", med_typ_Lanefollower_Acc_loc, static_cast<IPinEventSink*> (this)));
+			RETURN_IF_FAILED(RegisterPin(&Lanefollower_Acc));
+
+			//input pin lane tracking steering angle
+			tChar const * med_des_Lanefollower_steer = pDescManager->GetMediaDescription("tSignalValue");
+			RETURN_IF_POINTER_NULL(med_des_Lanefollower_steer);
+			cObjectPtr<IMediaType> med_typ_Lanefollower_steer_loc= new cMediaType(0, 0, 0, "tSignalValue", med_des_Lanefollower_steer, IMediaDescription::MDF_DDL_DEFAULT_VERSION);
+			RETURN_IF_FAILED(med_typ_Lanefollower_steer_loc->GetInterface(IID_ADTF_MEDIA_TYPE_DESCRIPTION, (tVoid**)&med_typ_Lanefollower_steer));
+			RETURN_IF_FAILED(Lanefollower_steer.Create("Lanetrackersteer", med_typ_Lanefollower_steer_loc, static_cast<IPinEventSink*> (this)));
+			RETURN_IF_FAILED(RegisterPin(&Lanefollower_steer));
+
+			//acceleration and steering input from maneuver
+			tChar const * med_des_accel1 = pDescManager->GetMediaDescription("tSignalValue");
+			RETURN_IF_POINTER_NULL(med_des_accel1);
+			cObjectPtr<IMediaType> med_typ_accel1_loc= new cMediaType(0, 0, 0, "tSignalValue", med_des_accel1, IMediaDescription::MDF_DDL_DEFAULT_VERSION);
+			RETURN_IF_FAILED(med_typ_accel1_loc->GetInterface(IID_ADTF_MEDIA_TYPE_DESCRIPTION, (tVoid**)&med_typ_accel1));
+			RETURN_IF_FAILED(maneuver_accel1.Create("acceleration_input_from_maneuver", med_typ_accel1_loc, static_cast<IPinEventSink*> (this)));
+			RETURN_IF_FAILED(RegisterPin(&maneuver_accel1));
+			
+			tChar const * med_des_steer1 = pDescManager->GetMediaDescription("tSignalValue");
+			RETURN_IF_POINTER_NULL(med_des_steer1);
+			cObjectPtr<IMediaType> med_typ_steer1_loc= new cMediaType(0, 0, 0, "tSignalValue", med_des_steer1, IMediaDescription::MDF_DDL_DEFAULT_VERSION);
+			RETURN_IF_FAILED(med_typ_steer1_loc->GetInterface(IID_ADTF_MEDIA_TYPE_DESCRIPTION, (tVoid**)&med_typ_steer1));
+			RETURN_IF_FAILED(maneuver_steer1.Create("steering_input_from_maneuver", med_typ_steer1_loc, static_cast<IPinEventSink*> (this)));
+			RETURN_IF_FAILED(RegisterPin(&maneuver_steer1));
+
+			//output pins
+			tChar const * med_des_m_accelerate = pDescManager->GetMediaDescription("tSignalValue");
+			RETURN_IF_POINTER_NULL(med_des_m_accelerate);
+			cObjectPtr<IMediaType> med_typ_m_accelerate_loc	= new cMediaType(0, 0, 0, "tSignalValue", med_des_m_accelerate, IMediaDescription::MDF_DDL_DEFAULT_VERSION);
+			RETURN_IF_FAILED(med_typ_m_accelerate_loc->GetInterface(IID_ADTF_MEDIA_TYPE_DESCRIPTION, (tVoid**)&med_typ_m_accelerate));
+			RETURN_IF_FAILED(m_accelerate.Create("SpeedConaccelerate", med_typ_m_accelerate_loc, static_cast<IPinEventSink*> (this)));
+			RETURN_IF_FAILED(RegisterPin(&m_accelerate));
+
+			tChar const * med_des_m_steer = pDescManager->GetMediaDescription("tSignalValue");
+			RETURN_IF_POINTER_NULL(med_des_m_steer);
+			cObjectPtr<IMediaType> med_typ_m_steer_loc	= new cMediaType(0, 0, 0, "tSignalValue", med_des_m_steer, IMediaDescription::MDF_DDL_DEFAULT_VERSION);
+			RETURN_IF_FAILED(med_typ_m_steer_loc->GetInterface(IID_ADTF_MEDIA_TYPE_DESCRIPTION, (tVoid**)&med_typ_m_steer));
+			RETURN_IF_FAILED(m_steer.Create("SpeedConsteer", med_typ_m_steer_loc, static_cast<IPinEventSink*> (this)));
+			RETURN_IF_FAILED(RegisterPin(&m_steer));
+
+			tChar const * med_des_m_headlight = pDescManager->GetMediaDescription("tBoolSignalValue");
+			RETURN_IF_POINTER_NULL(med_des_m_headlight);
+			cObjectPtr<IMediaType> med_typ_m_headlight_loc	= new cMediaType(0, 0, 0, "tBoolSignalValue", med_des_m_headlight, IMediaDescription::MDF_DDL_DEFAULT_VERSION);
+			RETURN_IF_FAILED(med_typ_m_headlight_loc->GetInterface(IID_ADTF_MEDIA_TYPE_DESCRIPTION, (tVoid**)&med_typ_m_headlight));
+			RETURN_IF_FAILED(m_headlight.Create("SpeedConHeadLight", med_typ_m_headlight_loc, static_cast<IPinEventSink*> (this)));
+			RETURN_IF_FAILED(RegisterPin(&m_headlight));
+
+			tChar const * med_des_activestatus_maneuver = pDescManager->GetMediaDescription("tBoolSignalValue");
+			RETURN_IF_POINTER_NULL(med_des_activestatus_maneuver);
+			cObjectPtr<IMediaType> med_typ_activestatus_maneuver_loc	= new cMediaType(0, 0, 0, "tBoolSignalValue", med_des_activestatus_maneuver, IMediaDescription::MDF_DDL_DEFAULT_VERSION);
+			RETURN_IF_FAILED(med_typ_activestatus_maneuver_loc->GetInterface(IID_ADTF_MEDIA_TYPE_DESCRIPTION, (tVoid**)&med_typ_activestatus_maneuver));
+			RETURN_IF_FAILED(Activestatus_maneuver.Create("ManeuverActiveStatus", med_typ_activestatus_maneuver_loc, static_cast<IPinEventSink*> (this)));
+			RETURN_IF_FAILED(RegisterPin(&Activestatus_maneuver));
+
+			tChar const * med_des_finishstatus_maneuver = pDescManager->GetMediaDescription("tBoolSignalValue");
+			RETURN_IF_POINTER_NULL(med_des_finishstatus_maneuver);
+			cObjectPtr<IMediaType> med_typ_finishstatus_maneuver_loc	= new cMediaType(0, 0, 0, "tBoolSignalValue", med_des_finishstatus_maneuver, IMediaDescription::MDF_DDL_DEFAULT_VERSION);
+			RETURN_IF_FAILED(med_typ_finishstatus_maneuver_loc->GetInterface(IID_ADTF_MEDIA_TYPE_DESCRIPTION, (tVoid**)&med_typ_finishstatus_maneuver));
+			RETURN_IF_FAILED(finishstatus_maneuver.Create("ManeuverFinishStatus", med_typ_finishstatus_maneuver_loc, static_cast<IPinEventSink*> (this)));
+			RETURN_IF_FAILED(RegisterPin(&finishstatus_maneuver));
+
+			tChar const * med_des_current_active_maneuver = pDescManager->GetMediaDescription("tSignalValue");
+			RETURN_IF_POINTER_NULL(med_des_current_active_maneuver);
+			cObjectPtr<IMediaType> med_typ_current_active_maneuver_loc	= new cMediaType(0, 0, 0, "tSignalValue", med_des_current_active_maneuver, IMediaDescription::MDF_DDL_DEFAULT_VERSION);
+			RETURN_IF_FAILED(med_typ_current_active_maneuver_loc->GetInterface(IID_ADTF_MEDIA_TYPE_DESCRIPTION, (tVoid**)&med_typ_current_active_maneuver));
+			RETURN_IF_FAILED(current_active_maneuver.Create("ActiveManuverID", med_typ_current_active_maneuver_loc, static_cast<IPinEventSink*> (this)));
+			RETURN_IF_FAILED(RegisterPin(&current_active_maneuver));
+		}
+		else if (eStage == StageNormal)
+		{
+
+		}
+		else if (eStage == StageGraphReady)
+		{
+
+		}
+		RETURN_NOERROR;
+
+}
+
+		tResult cspeedcontroller::Start(__exception)
+		{
+			return cFilter::Start(__exception_ptr);
+		}
+
+		tResult cspeedcontroller::Stop(__exception)
+		{
+			return cFilter::Stop(__exception_ptr);
+		}
+
+		tResult cspeedcontroller::Shutdown(tInitStage eStage, __exception)
+		{
+			if (eStage == StageNormal)
+			{
+
+			}
+			return cFilter::Shutdown(eStage, __exception_ptr);
+		}
+
+
+tResult cspeedcontroller::OnPinEvent(IPin* pSource, tInt nEventCode, tInt nParam1, tInt nParam2, IMediaSample* pMediaSample)
+{
+
+	RETURN_IF_POINTER_NULL(pMediaSample);
+	RETURN_IF_POINTER_NULL(pSource);
+	if (nEventCode == IPinEventSink::PE_MediaSampleReceived)
+	{
+		tUInt32 timeStamp = 0;
+		if (pSource == &JuryStart_Stop)
+		{
+			cObjectPtr<IMediaCoder> pCoderInput;
+			RETURN_IF_FAILED(med_typ_JuryStart_Stop->Lock(pMediaSample, &pCoderInput));
+			pCoderInput->Get("bValue", (tVoid*)&varJury_start_stop);
+			pCoderInput->Get("ui32ArduinoTimestamp", (tVoid*)&timeStamp);
+			// if i receive stop i need to stop the car don#t write the output
+			// need to check
+			if(varJury_start_stop)
+			{
+				Controllerstatusflag = LaneFollower_Active;
+				LOG_INFO("JURY START to speed controller");
+			}
+			med_typ_JuryStart_Stop->Unlock(pCoderInput);
+		}
+		else if (pSource == &Jurycomplete)
+		{
+			cObjectPtr<IMediaCoder> pCoderInput;
+			RETURN_IF_FAILED(med_typ_Jurycomplete->Lock(pMediaSample, &pCoderInput));
+			pCoderInput->Get("bValue", (tVoid*)&var_jurycomplete);
+			pCoderInput->Get("ui32ArduinoTimestamp", (tVoid*)&timeStamp);
+			// if i receive stop i need to stop the car don#t write the output
+			// need to check
+			if(var_jurycomplete)
+			{
+	    			var_accelerate = 90.0f;
+	    			var_steer = 90.0f;
+					Maneuver_Active_Flag = tFalse;
+					var_headlight = tTrue;
+					generateop(timeStamp);
+					LOG_INFO("JURY Stop to speed controller");
+					Controllerstatusflag = NO_Maneuver_Active;
+			}
+			med_typ_Jurycomplete->Unlock(pCoderInput);
+		}
+		else if (pSource == &Emergency_Brake_Flag)
+		{
+			cObjectPtr<IMediaCoder> pCoderInput;
+			RETURN_IF_FAILED(med_typ_Emergency_Brake_Flag->Lock(pMediaSample, &pCoderInput));
+			pCoderInput->Get("bValue", (tVoid*)&var_Emergency_Brake_Flag);
+			//LOG_INFO(cString::Format("EB signal received, var_Emergency_Brake_Flag = %f", var_signal_id));
+			pCoderInput->Get("ui32ArduinoTimestamp", (tVoid*)&timeStamp);
+			med_typ_Emergency_Brake_Flag->Unlock(pCoderInput);
+		}
+		else if (pSource == &ovtaking_acc)
+		{
+			cObjectPtr<IMediaCoder> pCoderInput;
+			RETURN_IF_FAILED(med_typ_ovtaking_acc->Lock(pMediaSample, &pCoderInput));
+			pCoderInput->Get("f32Value", (tVoid*)&var_ovtaking_Acc);
+			pCoderInput->Get("ui32ArduinoTimestamp", (tVoid*)&timeStamp);
+			med_typ_ovtaking_acc->Unlock(pCoderInput);
+		}
+		else if (pSource == &ovtaking_steer)
+		{
+			cObjectPtr<IMediaCoder> pCoderInput;
+			RETURN_IF_FAILED(med_typ_ovtaking_steer->Lock(pMediaSample, &pCoderInput));
+			pCoderInput->Get("f32Value", (tVoid*)&var_ovtaking_steer);
+			pCoderInput->Get("ui32ArduinoTimestamp", (tVoid*)&timeStamp);
+			med_typ_ovtaking_steer->Unlock(pCoderInput);
+		}
+		else if (pSource == &parking_acc)
+		{
+			cObjectPtr<IMediaCoder> pCoderInput;
+			RETURN_IF_FAILED(med_typ_parking_acc->Lock(pMediaSample, &pCoderInput));
+			pCoderInput->Get("f32Value", (tVoid*)&var_Parking_Acc);
+			pCoderInput->Get("ui32ArduinoTimestamp", (tVoid*)&timeStamp);
+			med_typ_parking_acc->Unlock(pCoderInput);
+		}
+		else if (pSource == &parking_steer)
+		{
+			cObjectPtr<IMediaCoder> pCoderInput;
+			RETURN_IF_FAILED(med_typ_parking_steer->Lock(pMediaSample, &pCoderInput));
+			pCoderInput->Get("f32Value", (tVoid*)&var_Parking_steer);
+			pCoderInput->Get("ui32ArduinoTimestamp", (tVoid*)&timeStamp);
+			med_typ_parking_steer->Unlock(pCoderInput);
+		}
+		else if (pSource == &pullout_acc)
+		{
+			cObjectPtr<IMediaCoder> pCoderInput;
+			RETURN_IF_FAILED(med_typ_pullout_acc->Lock(pMediaSample, &pCoderInput));
+			pCoderInput->Get("f32Value", (tVoid*)&var_pullout_acc);
+			pCoderInput->Get("ui32ArduinoTimestamp", (tVoid*)&timeStamp);
+			med_typ_pullout_acc->Unlock(pCoderInput);
+		}
+		else if (pSource == &pullout_steer)
+		{
+			cObjectPtr<IMediaCoder> pCoderInput;
+			RETURN_IF_FAILED(med_typ_pullout_steer->Lock(pMediaSample, &pCoderInput));
+			pCoderInput->Get("f32Value", (tVoid*)&var_pullout_steer);
+			pCoderInput->Get("ui32ArduinoTimestamp", (tVoid*)&timeStamp);
+			med_typ_pullout_steer->Unlock(pCoderInput);
+		}
+        else if (pSource == &Lanefollower_Acc)
+		{
+			cObjectPtr<IMediaCoder> pCoderInput;
+			RETURN_IF_FAILED(med_typ_Lanefollower_Acc->Lock(pMediaSample, &pCoderInput));
+			pCoderInput->Get("f32Value", (tVoid*)&var_Lanefollower_Acc);
+			//LOG_INFO(cString::Format("LaneFollower ACceleration received, var_Lanefollower_Acc = %f", var_Lanefollower_Acc));
+			pCoderInput->Get("ui32ArduinoTimestamp", (tVoid*)&timeStamp);
+			med_typ_Lanefollower_Acc->Unlock(pCoderInput);
+		}
+		else if (pSource == &Lanefollower_steer)
+		{
+			cObjectPtr<IMediaCoder> pCoderInput;
+			RETURN_IF_FAILED(med_typ_Lanefollower_steer->Lock(pMediaSample, &pCoderInput));
+			pCoderInput->Get("f32Value", (tVoid*)&var_Lanefollower_steer);
+			//LOG_INFO(cString::Format("LaneFollower Steering received, var_Lanefollower_steer = %f", var_Lanefollower_steer));
+			pCoderInput->Get("ui32ArduinoTimestamp", (tVoid*)&timeStamp);
+			med_typ_Lanefollower_steer->Unlock(pCoderInput);
+		}
+		else if (pSource == &maneuver_accel1)
+		{
+			cObjectPtr<IMediaCoder> pCoderInput;
+			RETURN_IF_FAILED(med_typ_accel1->Lock(pMediaSample, &pCoderInput));
+			pCoderInput->Get("f32Value", (tVoid*)&var_maneuver_accel1);
+			pCoderInput->Get("ui32ArduinoTimestamp", (tVoid*)&timeStamp);
+			med_typ_accel1->Unlock(pCoderInput);
+		}
+		else if (pSource == &maneuver_steer1)
+		{
+			cObjectPtr<IMediaCoder> pCoderInput;
+			RETURN_IF_FAILED(med_typ_steer1->Lock(pMediaSample, &pCoderInput));
+			pCoderInput->Get("f32Value", (tVoid*)&var_maneuver_steer1);
+			pCoderInput->Get("ui32ArduinoTimestamp", (tVoid*)&timeStamp);
+			med_typ_steer1->Unlock(pCoderInput);
+		}
+        else if (pSource == &m_maneuver_statusflag )  // pin from Manueuver Filter
+		{
+			cObjectPtr<IMediaCoder> pCoderInput;
+			RETURN_IF_FAILED(med_typ_m_maneuver_start_flag->Lock(pMediaSample, &pCoderInput));
+			pCoderInput->Get("bValue", (tVoid*)&maneuver_start_flag);
+			pCoderInput->Get("ui32ArduinoTimestamp", (tVoid*)&timeStamp);
+			med_typ_m_maneuver_start_flag->Unlock(pCoderInput);
+			if(maneuver_start_flag)
+			{
+				LOG_INFO(cString::Format("Speed COntroller Maneuvers at intersection is active"));
+				Controllerstatusflag = Maneuvers_Active;
+				Maneuver_Active_Flag = tTrue;
+				var_signal_id = Maneuvers_int_active;
+			}
+			else
+			{
+				LOG_INFO(cString::Format("Speed COntroller Maneuvers at intersection is deactive Lanefollower Active"));
+				Controllerstatusflag = LaneFollower_Active;
+				var_signal_id = default_starting_phase;
+				Maneuver_Active_Flag = tFalse;
+				generateop_finishstatus(timeStamp);
+			}
+		}
+        else if (pSource == &Signal_IDS )  // pin from Manueuver Filter
+		{
+			cObjectPtr<IMediaCoder> pCoderInput;
+			RETURN_IF_FAILED(med_typ_Signal_IDS->Lock(pMediaSample, &pCoderInput));
+			pCoderInput->Get("f32Value", (tVoid*)&var_signal_id);
+			pCoderInput->Get("ui32ArduinoTimestamp", (tVoid*)&timeStamp);
+			//LOG_INFO(cString::Format("Signal ID's = %f", var_signal_id));
+			//if(pullout_parallel_active == var_signal_id || pulloutleft_active == var_signal_id || pulloutright_active == var_signal_id)
+			if(fabs(pullout_parallel_active - var_signal_id) < FLT_EPSILON || fabs(pulloutleft_active - var_signal_id) < FLT_EPSILON ||
+					fabs(pulloutright_active - var_signal_id) < FLT_EPSILON)
+			{
+				LOG_INFO(cString::Format("Speed COntroller Pullover is active %f",var_signal_id));
+				Controllerstatusflag = Pullover_Active;
+				Maneuver_Active_Flag = tTrue;
+			}
+			else if(fabs(pullout_finished - var_signal_id) < FLT_EPSILON)
+			{
+				LOG_INFO(cString::Format("Speed COntroller Pullover is deactive %f Lanefollower Active",var_signal_id));
+				Controllerstatusflag = LaneFollower_Active;
+				Maneuver_Active_Flag = tFalse;
+				var_signal_id = default_starting_phase;
+				generateop_finishstatus(timeStamp);
+			}
+			else if(fabs(parallelparking_active - var_signal_id) < FLT_EPSILON || fabs(crossparking_active - var_signal_id) < FLT_EPSILON)
+			{
+				LOG_INFO(cString::Format("Speed COntroller Parking is active %f",var_signal_id));
+				Controllerstatusflag = Parking_Active;
+				Maneuver_Active_Flag = tTrue;
+			}
+			else if(fabs(parking_deactive - var_signal_id) < FLT_EPSILON)
+			{
+				LOG_INFO(cString::Format("Speed COntroller parking is deactive %f NoManeuversActive",var_signal_id));
+				Controllerstatusflag = NO_Maneuver_Active;
+    			var_accelerate = 90.0f;
+    			var_steer = 90.0f;
+				Maneuver_Active_Flag = tFalse;
+				generateop(timeStamp);
+				generateop_finishstatus(timeStamp);
+			}
+			else if(fabs(overtaking_active - var_signal_id) < FLT_EPSILON)
+			{
+				LOG_INFO(cString::Format("Speed COntroller overtaking is active %f",var_signal_id));
+				Controllerstatusflag = Overtaking_Active;
+			}
+			else if(fabs(overtaking_deactive - var_signal_id) < FLT_EPSILON)
+			{
+				LOG_INFO(cString::Format("Speed COntroller overtaking is deactive %f lanefolloweractive",var_signal_id));
+				Controllerstatusflag = LaneFollower_Active;
+				var_signal_id = default_starting_phase;
+			}
+			med_typ_Signal_IDS->Unlock(pCoderInput);
+		}
+        else if (pSource == &m_Ultrasonic_Front_Center && NO_Maneuver_Active!= Controllerstatusflag)
+		{
+        	if(Pullover_Active == Controllerstatusflag)
+        	{
+				var_accelerate = var_pullout_acc;
+				var_steer = var_pullout_steer;
+				var_headlight = tFalse;
+        	}
+        	else if(Parking_Active == Controllerstatusflag)
+        	{
+    				var_accelerate = var_Parking_Acc;
+    				var_steer = var_Parking_steer;
+    				var_headlight = tFalse;
+        	}
+        	else if(var_Emergency_Brake_Flag) //if emergency flag active go with it
+        	{
+				var_accelerate = 90.0f;
+				var_headlight = tTrue;
+        	}
+        	else
+        	{
+            	switch(Controllerstatusflag) // else go with the status flag to switch between maneuvers
+            	{
+            	case Maneuvers_Active:
+    				var_accelerate = var_maneuver_accel1;
+    				var_steer = var_maneuver_steer1;
+    				var_headlight = tFalse;
+    				break;
+            	case LaneFollower_Active:
+    				var_accelerate = var_Lanefollower_Acc;
+    				var_steer = var_Lanefollower_steer;
+				if(var_Lanefollower_steer>97 || var_Lanefollower_steer <83)
+					var_accelerate = 81.0f;
+    				var_headlight = tFalse;
+    				break;
+            	case Overtaking_Active:
+    				var_accelerate = var_ovtaking_Acc;
+    				var_steer = var_ovtaking_steer;
+    				var_headlight = tFalse;
+    				break;
+            	default:
+    				var_accelerate = 90.0f;
+    				var_steer = 90.0f;
+    				var_headlight = tFalse;
+    				break;
+            	}
+        	}
+        	generateop(timeStamp);
+		}
+		else 
+		{
+			RETURN_ERROR(ERR_FAILED);
+		}
+	}
+	RETURN_NOERROR;
+}
+
+tResult cspeedcontroller::generateop_finishstatus(tUInt32 timeStamp)
+{
+	LOG_INFO("SpeedController Finish Status send true");
+	cObjectPtr<IMediaSample> pMediaSamplefinishstatus;
+	AllocMediaSample((tVoid**)&pMediaSamplefinishstatus);
+
+    cObjectPtr<IMediaSerializer> pSerializerefinishstatus;
+    med_typ_finishstatus_maneuver->GetMediaSampleSerializer(&pSerializerefinishstatus);
+	tInt nSizefinishstatus = pSerializerefinishstatus->GetDeserializedSize();
+	pMediaSamplefinishstatus->AllocBuffer(nSizefinishstatus);
+	cObjectPtr<IMediaCoder> pCoderOutputfinishstatus;
+	med_typ_finishstatus_maneuver->WriteLock(pMediaSamplefinishstatus, &pCoderOutputfinishstatus);
+	tBool var_finishstatus = tTrue;
+	pCoderOutputfinishstatus->Set("bValue", (tVoid*)&(var_finishstatus));
+	pCoderOutputfinishstatus->Set("ui32ArduinoTimestamp", (tVoid*)&timeStamp);
+	med_typ_finishstatus_maneuver->Unlock(pCoderOutputfinishstatus);
+	pMediaSamplefinishstatus->SetTime(_clock->GetStreamTime());
+	finishstatus_maneuver.Transmit(pMediaSamplefinishstatus);
+
+	RETURN_NOERROR;
+}
+tResult cspeedcontroller::generateop(tUInt32 timeStamp)
+{
+	//create new media sample
+	cObjectPtr<IMediaSample> pMediaSample_active_maneuver;
+	AllocMediaSample((tVoid**)&pMediaSample_active_maneuver);
+
+	cObjectPtr<IMediaSample> pMediaSampleaccelerate;
+	AllocMediaSample((tVoid**)&pMediaSampleaccelerate);
+
+	cObjectPtr<IMediaSample> pMediaSamplesteer;
+	AllocMediaSample((tVoid**)&pMediaSamplesteer);
+
+	cObjectPtr<IMediaSample> pMediaSampleheadlight;
+	AllocMediaSample((tVoid**)&pMediaSampleheadlight);
+
+	cObjectPtr<IMediaSample> pMediaSample_maneuveractive_status;
+	AllocMediaSample((tVoid**)&pMediaSample_maneuveractive_status);
+
+	cObjectPtr<IMediaSerializer> pSerializeremaneuveractivestatus;
+	med_typ_activestatus_maneuver->GetMediaSampleSerializer(&pSerializeremaneuveractivestatus);
+	tInt nSizeactivestatus= pSerializeremaneuveractivestatus->GetDeserializedSize();
+	pMediaSample_maneuveractive_status->AllocBuffer(nSizeactivestatus);
+	cObjectPtr<IMediaCoder> pCoderOutputmanactivestatus;
+	med_typ_activestatus_maneuver->WriteLock(pMediaSample_maneuveractive_status, &pCoderOutputmanactivestatus);
+	tBool localvariable = tTrue;
+	pCoderOutputmanactivestatus->Set("bValue", (tVoid*)&(localvariable));
+	pCoderOutputmanactivestatus->Set("ui32ArduinoTimestamp", (tVoid*)&timeStamp);
+	med_typ_activestatus_maneuver->Unlock(pCoderOutputmanactivestatus);
+	pMediaSample_maneuveractive_status->SetTime(_clock->GetStreamTime());
+	Activestatus_maneuver.Transmit(pMediaSample_maneuveractive_status);
+
+	cObjectPtr<IMediaSerializer> pSerializeractive_maneuver;
+	med_typ_current_active_maneuver->GetMediaSampleSerializer(&pSerializeractive_maneuver);
+	tInt nSizeactive_maneuver = pSerializeractive_maneuver->GetDeserializedSize();
+	pMediaSample_active_maneuver->AllocBuffer(nSizeactive_maneuver);
+	cObjectPtr<IMediaCoder> pCoderOutputactive_maneuver;
+	med_typ_current_active_maneuver->WriteLock(pMediaSample_active_maneuver, &pCoderOutputactive_maneuver);
+	pCoderOutputactive_maneuver->Set("f32Value", (tVoid*)&(var_signal_id));
+	pCoderOutputactive_maneuver->Set("ui32ArduinoTimestamp", (tVoid*)&timeStamp);
+	med_typ_current_active_maneuver->Unlock(pCoderOutputactive_maneuver);
+	pMediaSample_active_maneuver->SetTime(_clock->GetStreamTime());
+	current_active_maneuver.Transmit(pMediaSample_active_maneuver);
+	
+	cObjectPtr<IMediaSerializer> pSerializeraccelerate;
+	med_typ_m_accelerate->GetMediaSampleSerializer(&pSerializeraccelerate);
+	tInt nSizeaccelerate = pSerializeraccelerate->GetDeserializedSize();
+	pMediaSampleaccelerate->AllocBuffer(nSizeaccelerate);
+	cObjectPtr<IMediaCoder> pCoderOutputaccelerate;
+	med_typ_m_accelerate->WriteLock(pMediaSampleaccelerate, &pCoderOutputaccelerate);
+	pCoderOutputaccelerate->Set("f32Value", (tVoid*)&(var_accelerate));
+	pCoderOutputaccelerate->Set("ui32ArduinoTimestamp", (tVoid*)&timeStamp);
+	med_typ_m_accelerate->Unlock(pCoderOutputaccelerate);
+	pMediaSampleaccelerate->SetTime(_clock->GetStreamTime());
+	m_accelerate.Transmit(pMediaSampleaccelerate);
+
+    cObjectPtr<IMediaSerializer> pSerializereheadlight;
+    med_typ_m_headlight->GetMediaSampleSerializer(&pSerializereheadlight);
+	tInt nSizeheadlight = pSerializereheadlight->GetDeserializedSize();
+	pMediaSampleheadlight->AllocBuffer(nSizeheadlight);
+	cObjectPtr<IMediaCoder> pCoderOutputheadlight;
+	med_typ_m_headlight->WriteLock(pMediaSampleheadlight, &pCoderOutputheadlight);
+	pCoderOutputheadlight->Set("bValue", (tVoid*)&(var_headlight));
+	pCoderOutputheadlight->Set("ui32ArduinoTimestamp", (tVoid*)&timeStamp);
+	med_typ_m_headlight->Unlock(pCoderOutputheadlight);
+	pMediaSampleheadlight->SetTime(_clock->GetStreamTime());
+	m_headlight.Transmit(pMediaSampleheadlight);
+
+	cObjectPtr<IMediaSerializer> pSerializersteer;
+	med_typ_m_steer->GetMediaSampleSerializer(&pSerializersteer);
+	tInt nSizesteer = pSerializersteer->GetDeserializedSize();
+	pMediaSamplesteer->AllocBuffer(nSizesteer);
+	cObjectPtr<IMediaCoder> pCoderOutputsteer;
+	med_typ_m_steer->WriteLock(pMediaSamplesteer, &pCoderOutputsteer);
+	pCoderOutputsteer->Set("f32Value", (tVoid*)&(var_steer));
+	pCoderOutputsteer->Set("ui32ArduinoTimestamp", (tVoid*)&timeStamp);
+	med_typ_m_steer->Unlock(pCoderOutputsteer);
+	pMediaSamplesteer->SetTime(_clock->GetStreamTime());
+	m_steer.Transmit(pMediaSamplesteer);
+
+	RETURN_NOERROR;
+}
+
+
+    
+

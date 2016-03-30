@@ -1,0 +1,254 @@
+/**
+Copyright (c) 
+Audi Autonomous Driving Cup. All rights reserved.
+
+Redistribution and use in source and binary forms, with or without modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this list of conditions and the following disclaimer.
+2. Redistributions in binary form must reproduce the above copyright notice, this list of conditions and the following disclaimer in the documentation and/or other materials provided with the distribution.
+3.  All advertising materials mentioning features or use of this software must display the following acknowledgement: �This product includes software developed by the Audi AG and its contributors for Audi Autonomous Driving Cup.�
+4.  Neither the name of Audi nor the names of its contributors may be used to endorse or promote products derived from this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY AUDI AG AND CONTRIBUTORS �AS IS� AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL AUDI AG OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+
+**********************************************************************
+* $Author:: spiesra $  $Date:: 2015-05-13 08:29:07#$ $Rev:: 35003   $
+**********************************************************************/
+
+
+// arduinofilter.cpp : Definiert die exportierten Funktionen f�r die DLL-Anwendung.
+//
+#include "stdafx.h"
+#include "cemergencybraking.h"
+
+#define MIN_DISTANCE "cemergencybraking::threshold_value"
+
+ADTF_FILTER_PLUGIN("AADC Emergency Braking", OID_ADTF_EMERGENCYBRAKING, cemergencybraking)
+
+cemergencybraking::cemergencybraking(const tChar* __info) : cFilter(__info)
+{
+    //m_pISignalRegistry = NULL;
+    SetPropertyFloat(MIN_DISTANCE,0.4);
+    SetPropertyBool(MIN_DISTANCE NSSUBPROP_ISCHANGEABLE,tTrue);
+    SetPropertyStr(MIN_DISTANCE NSSUBPROP_DESCRIPTION, "the minimal threshold value");
+
+    Ultrasonic_Front_Left = 4.0f;
+	Ultrasonic_Front_Right = 4.0f;
+	Ultrasonic_Front_Center = 4.0f;
+
+	emergencybrake = tFalse;
+	var_steer = 90.f;
+	ReadProperties(NULL);
+}
+
+cemergencybraking::~cemergencybraking()
+{
+	
+}
+
+tResult cemergencybraking::Init(tInitStage eStage, __exception)
+{
+
+	RETURN_IF_FAILED(cFilter::Init(eStage, __exception_ptr))
+
+
+		if (eStage == StageFirst)
+		{
+
+			// create description manager
+			cObjectPtr<IMediaDescriptionManager> pDescManager;
+			RETURN_IF_FAILED(_runtime->GetObject(OID_ADTF_MEDIA_DESCRIPTION_MANAGER, IID_ADTF_MEDIA_DESCRIPTION_MANAGER, (tVoid**)&pDescManager, __exception_ptr));
+
+			// get media type for input pins
+
+			tChar const * strDescSignalm_steer_input = pDescManager->GetMediaDescription("tSignalValue"); //tBoolSignalValue
+			RETURN_IF_POINTER_NULL(strDescSignalm_steer_input);
+			cObjectPtr<IMediaType> pTypeSignalm_steer_input = new cMediaType(0, 0, 0, "tSignalValue", strDescSignalm_steer_input, IMediaDescription::MDF_DDL_DEFAULT_VERSION);
+			RETURN_IF_FAILED(pTypeSignalm_steer_input->GetInterface(IID_ADTF_MEDIA_TYPE_DESCRIPTION, (tVoid**)&m_pDescm_steer_input));
+			RETURN_IF_FAILED(m_steer_input.Create("EBSteeringinput", pTypeSignalm_steer_input, static_cast<IPinEventSink*> (this)));
+			RETURN_IF_FAILED(RegisterPin(&m_steer_input));
+
+			tChar const * strDescSignalUltrasonic_Front_Left = pDescManager->GetMediaDescription("tSignalValue");
+			RETURN_IF_POINTER_NULL(strDescSignalUltrasonic_Front_Left);
+			cObjectPtr<IMediaType> pTypeSignalUltrasonic_Front_Left = new cMediaType(0, 0, 0, "tSignalValue", strDescSignalUltrasonic_Front_Left, IMediaDescription::MDF_DDL_DEFAULT_VERSION);
+			RETURN_IF_FAILED(pTypeSignalUltrasonic_Front_Left->GetInterface(IID_ADTF_MEDIA_TYPE_DESCRIPTION, (tVoid**)&m_pDescUltrasonic_Front_Left));
+			RETURN_IF_FAILED(m_Ultrasonic_Front_Left.Create("ultrasonic_frontleft", pTypeSignalUltrasonic_Front_Left, static_cast<IPinEventSink*> (this)));
+			RETURN_IF_FAILED(RegisterPin(&m_Ultrasonic_Front_Left));
+
+			tChar const * strDescSignalUltrasonic_Front_Center = pDescManager->GetMediaDescription("tSignalValue");
+			RETURN_IF_POINTER_NULL(strDescSignalUltrasonic_Front_Center);
+			cObjectPtr<IMediaType> pTypeSignalUltrasonic_Front_Center = new cMediaType(0, 0, 0, "tSignalValue", strDescSignalUltrasonic_Front_Center, IMediaDescription::MDF_DDL_DEFAULT_VERSION);
+			RETURN_IF_FAILED(pTypeSignalUltrasonic_Front_Center->GetInterface(IID_ADTF_MEDIA_TYPE_DESCRIPTION, (tVoid**)&m_pDescUltrasonic_Front_Center));
+			RETURN_IF_FAILED(m_Ultrasonic_Front_Center.Create("ultrasonic_center", pTypeSignalUltrasonic_Front_Center, static_cast<IPinEventSink*> (this)));
+			RETURN_IF_FAILED(RegisterPin(&m_Ultrasonic_Front_Center));
+
+			tChar const * strDescSignalUltrasonic_Front_Right = pDescManager->GetMediaDescription("tSignalValue");
+			RETURN_IF_POINTER_NULL(strDescSignalUltrasonic_Front_Right);
+			cObjectPtr<IMediaType> pTypeSignalUltrasonic_Front_Right = new cMediaType(0, 0, 0, "tSignalValue", strDescSignalUltrasonic_Front_Right, IMediaDescription::MDF_DDL_DEFAULT_VERSION);
+			RETURN_IF_FAILED(pTypeSignalUltrasonic_Front_Right->GetInterface(IID_ADTF_MEDIA_TYPE_DESCRIPTION, (tVoid**)&m_pDescUltrasonic_Front_Right));
+			RETURN_IF_FAILED(m_Ultrasonic_Front_Right.Create("ultrasonic_frontright", pTypeSignalUltrasonic_Front_Right, static_cast<IPinEventSink*> (this)));
+			RETURN_IF_FAILED(RegisterPin(&m_Ultrasonic_Front_Right));
+
+			// output pins 
+			tChar const * strDescSignalemergencybrake = pDescManager->GetMediaDescription("tBoolSignalValue"); //tBoolSignalValue
+			RETURN_IF_POINTER_NULL(strDescSignalemergencybrake);
+			cObjectPtr<IMediaType> pTypeSignalemergencybrake = new cMediaType(0, 0, 0, "tBoolSignalValue", strDescSignalemergencybrake, IMediaDescription::MDF_DDL_DEFAULT_VERSION);
+			RETURN_IF_FAILED(pTypeSignalemergencybrake->GetInterface(IID_ADTF_MEDIA_TYPE_DESCRIPTION, (tVoid**)&m_pDescemergencybrake));
+			RETURN_IF_FAILED(m_emergencybrake.Create("Emergency Brake", pTypeSignalemergencybrake, static_cast<IPinEventSink*> (this)));
+			RETURN_IF_FAILED(RegisterPin(&m_emergencybrake));
+
+		}
+
+
+
+
+		else if (eStage == StageNormal)
+		{
+
+		}
+		else if (eStage == StageGraphReady)
+		{
+
+		}
+
+		RETURN_NOERROR;
+
+}
+
+		tResult cemergencybraking::Start(__exception)
+		{
+			return cFilter::Start(__exception_ptr);
+		}
+
+		tResult cemergencybraking::Stop(__exception)
+		{
+			return cFilter::Stop(__exception_ptr);
+		}
+
+		tResult cemergencybraking::Shutdown(tInitStage eStage, __exception)
+		{
+			if (eStage == StageNormal)
+			{
+
+			}
+			return cFilter::Shutdown(eStage, __exception_ptr);
+		}
+
+
+
+		tResult cemergencybraking::PropertyChanged(const char* strProperty)
+		{
+			ReadProperties(strProperty);
+
+			RETURN_NOERROR;
+		}
+		tResult cemergencybraking::ReadProperties(const tChar* strPropertyName)
+		{
+			if (NULL == strPropertyName || cString::IsEqual(strPropertyName, MIN_DISTANCE))
+			{
+				thresholdlimit = static_cast<tFloat32> (GetPropertyFloat(MIN_DISTANCE));
+			}
+			RETURN_NOERROR;
+		}
+
+
+
+
+tResult cemergencybraking::OnPinEvent(IPin* pSource, tInt nEventCode, tInt nParam1, tInt nParam2, IMediaSample* pMediaSample)
+{
+	RETURN_IF_POINTER_NULL(pMediaSample);
+	RETURN_IF_POINTER_NULL(pSource);
+
+	if (nEventCode == IPinEventSink::PE_MediaSampleReceived)
+	{
+		tUInt32 timeStamp = 0;
+		if (pSource == &m_Ultrasonic_Front_Left)
+		{
+			//LOG_INFO("Vinoth Ultrasonic");
+			cObjectPtr<IMediaCoder> pCoderInput;
+			RETURN_IF_FAILED(m_pDescUltrasonic_Front_Left->Lock(pMediaSample, &pCoderInput));
+			pCoderInput->Get("f32Value", (tVoid*)&Ultrasonic_Front_Left);
+			pCoderInput->Get("ui32ArduinoTimestamp", (tVoid*)&timeStamp);
+			m_pDescUltrasonic_Front_Left->Unlock(pCoderInput);
+		}
+		else if (pSource == &m_Ultrasonic_Front_Right)
+		{
+			cObjectPtr<IMediaCoder> pCoderInput;
+			RETURN_IF_FAILED(m_pDescUltrasonic_Front_Right->Lock(pMediaSample, &pCoderInput));
+			pCoderInput->Get("f32Value", (tVoid*)&Ultrasonic_Front_Right);
+			pCoderInput->Get("ui32ArduinoTimestamp", (tVoid*)&timeStamp);
+			m_pDescUltrasonic_Front_Right->Unlock(pCoderInput);
+		}
+		else if (pSource == &m_Ultrasonic_Front_Center)
+		{
+			cObjectPtr<IMediaCoder> pCoderInput;
+			RETURN_IF_FAILED(m_pDescUltrasonic_Front_Center->Lock(pMediaSample, &pCoderInput));
+			pCoderInput->Get("f32Value", (tVoid*)&Ultrasonic_Front_Center);
+			pCoderInput->Get("ui32ArduinoTimestamp", (tVoid*)&timeStamp);
+			m_pDescUltrasonic_Front_Center->Unlock(pCoderInput);
+			ebfunction(timeStamp);
+		}
+		else if (pSource == &m_steer_input)
+		{
+			cObjectPtr<IMediaCoder> pCoderInput;
+			RETURN_IF_FAILED(m_pDescm_steer_input->Lock(pMediaSample, &pCoderInput));
+			pCoderInput->Get("f32Value", (tVoid*)&var_steer);
+			pCoderInput->Get("ui32ArduinoTimestamp", (tVoid*)&timeStamp);
+			m_pDescm_steer_input->Unlock(pCoderInput);
+			ebfunction(timeStamp);
+		}
+		else 
+		{
+			RETURN_ERROR(ERR_FAILED);
+		}
+		
+
+	}
+	RETURN_NOERROR;
+}
+
+//steering from 60 to 120
+tResult cemergencybraking::ebfunction(tUInt32 timeStamp)
+{
+	tFloat32 var_ultrasonic_right = Ultrasonic_Front_Right;
+	if((var_steer > 105) || (var_steer <75))
+		var_ultrasonic_right = 4.0f;
+
+	if((Ultrasonic_Front_Center < thresholdlimit)||
+			(Ultrasonic_Front_Left < (thresholdlimit-0.25))||
+			(var_ultrasonic_right < (thresholdlimit-0.25)))
+	{
+        emergencybrake = tTrue;
+	}
+	else
+	{		
+        emergencybrake = tFalse;
+	}
+	
+	generateop(timeStamp);
+	RETURN_NOERROR;
+}
+
+tResult cemergencybraking::generateop(tUInt32 timeStamp)
+{
+	cObjectPtr<IMediaSample> pMediaSampleemergencybrake;
+	AllocMediaSample((tVoid**)&pMediaSampleemergencybrake);
+
+ 	cObjectPtr<IMediaSerializer>pSerializeremergencybrake;
+	m_pDescemergencybrake->GetMediaSampleSerializer(&pSerializeremergencybrake);
+	tInt nSizeemergencybrake = pSerializeremergencybrake->GetDeserializedSize();
+	pMediaSampleemergencybrake->AllocBuffer(nSizeemergencybrake);
+	cObjectPtr<IMediaCoder> pCoderOutputemergencybrake;
+	m_pDescemergencybrake->WriteLock(pMediaSampleemergencybrake, &pCoderOutputemergencybrake);
+	pCoderOutputemergencybrake->Set("bValue", (tVoid*)&(emergencybrake));
+	pCoderOutputemergencybrake->Set("ui32ArduinoTimestamp", (tVoid*)&timeStamp);
+	m_pDescemergencybrake->Unlock(pCoderOutputemergencybrake);
+	pMediaSampleemergencybrake->SetTime(_clock->GetStreamTime());
+	m_emergencybrake.Transmit(pMediaSampleemergencybrake);
+
+	RETURN_NOERROR;
+
+}
+
+
